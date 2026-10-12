@@ -115,6 +115,8 @@ services:
       # Qwen3-Embedding uses last-token pooling.
       - --pooling
       - "last"
+      # One input must fit in one ubatch: 2048 tokens is ~2x core-api's largest passage and keeps the
+      # GPU scratch buffer small (8192 reserved so much that the chat model couldn't load).
       - --ctx-size
       - "2048"
       - --batch-size
