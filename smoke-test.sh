@@ -55,6 +55,15 @@ expect_blocked() {
 }
 
 echo "== ${MODE#--} checks"
+if [ "$MODE" = "--public" ]; then
+  # A just-started cloudflared needs a few seconds to register; until then Cloudflare answers 530 / 1033.
+  for _ in $(seq 1 30); do
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${ACCESS[@]}" "$BASE/health" || true)
+    [ "$code" = "200" ] && break
+    sleep 2
+  done
+  [ "$code" = "200" ] && echo "ok   tunnel reachable ($BASE/health)" || { echo "FAIL tunnel not reachable: $BASE/health -> $code"; fail=1; }
+fi
 if [ "$MODE" != "--public" ]; then
   for port in 8080 8081 8082; do
     code=$(curl -s -o /dev/null -w '%{http_code}' "$(url $port /health)" || true)
