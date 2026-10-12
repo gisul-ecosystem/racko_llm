@@ -123,6 +123,10 @@ services:
       - "2048"
       - --ubatch-size
       - "2048"
+      # Without flash attention the 2048-token attention matrix alone needs a ~1.2 GB scratch buffer,
+      # which no longer fits next to the 8B chat model. Same embeddings, a fraction of the memory.
+      - --flash-attn
+      - "on"
       - --metrics
 
   # Profile A: reranker on CPU so the 8B chat model fits on the 8 GB card.
@@ -203,6 +207,8 @@ services:
       - "2048"
       - --ubatch-size
       - "2048"
+      - --flash-attn
+      - "on"
       - --metrics
 
   # Document parser for knowledge-base uploads (CPU, ~3–4 GB RAM). Requests need header X-Api-Key.
