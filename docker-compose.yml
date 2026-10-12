@@ -115,16 +115,16 @@ services:
       # Qwen3-Embedding uses last-token pooling.
       - --pooling
       - "last"
-      # One input must fit in one ubatch: 2048 tokens is ~2x core-api's largest passage and keeps the
-      # GPU scratch buffer small (8192 reserved so much that the chat model couldn't load).
+      # VRAM: the GGUF keeps Qwen3's 151,669-word output layer, and llama.cpp reserves its scores for every
+      # token of a ubatch: ubatch × 151,669 × 4 B (2048 → 1.2 GB, which didn't fit next to Qwen3-8B;
+      # 1024 → ~610 MB). One input must fit in one ubatch, so core-api caps embedded text at
+      # CHATBOT_EMBED_MAX_CHARS (2400 chars ≈ ≤ 960 tokens). Raise both together, never just one.
       - --ctx-size
-      - "2048"
+      - "1024"
       - --batch-size
-      - "2048"
+      - "1024"
       - --ubatch-size
-      - "2048"
-      # Without flash attention the 2048-token attention matrix alone needs a ~1.2 GB scratch buffer,
-      # which no longer fits next to the 8B chat model. Same embeddings, a fraction of the memory.
+      - "1024"
       - --flash-attn
       - "on"
       - --metrics
