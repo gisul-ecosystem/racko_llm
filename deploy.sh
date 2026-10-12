@@ -24,7 +24,10 @@ BIND_ADDR="$(env_value BIND_ADDR)"
 if [ "$BIND_ADDR" = "0.0.0.0" ] && [ "${ALLOW_ALL_INTERFACES:-0}" != "1" ]; then
   die "BIND_ADDR=0.0.0.0 exposes the models on every interface (Docker bypasses ufw). Use the private/WireGuard IP, or ALLOW_ALL_INTERFACES=1 if this machine has no public interface."
 fi
-ip -o addr show 2>/dev/null | grep -qw "$BIND_ADDR" || [ "$BIND_ADDR" = "0.0.0.0" ] || die "BIND_ADDR $BIND_ADDR is not an address of this machine"
+# Note: never `cmd | grep -q` under pipefail — grep exits on the first match, the writer gets SIGPIPE (141)
+# and the pipeline "fails" even though it matched. Capture first, then grep the variable.
+HOST_ADDRS="$(ip -o addr show 2>/dev/null || true)"
+grep -qwF "$BIND_ADDR" <<<"$HOST_ADDRS" || [ "$BIND_ADDR" = "0.0.0.0" ] || die "BIND_ADDR $BIND_ADDR is not an address of this machine"
 
 PROFILES=",$(env_value COMPOSE_PROFILES),"
 if [[ "$PROFILES" == *",docling,"* ]]; then
@@ -57,7 +60,7 @@ wait_healthy() {
     # Services without a health check (gpu-exporter) only need to be running.
     pending="$(docker compose ps --format '{{.Service}} {{.State}} {{.Health}}' | awk '$2!="running" || ($3!="" && $3!="healthy")')"
     [ -z "$pending" ] && { log "all services healthy"; return 0; }
-    if echo "$pending" | grep -qE ' (unhealthy|exited|dead|restarting)'; then
+    if grep -qE ' (unhealthy|exited|dead|restarting)' <<<"$pending"; then
       log "unhealthy: $pending"; docker compose logs --tail=40 >&2 || true; return 1
     fi
     [ "$(date +%s)" -lt "$deadline" ] || { log "timed out: $pending"; return 1; }

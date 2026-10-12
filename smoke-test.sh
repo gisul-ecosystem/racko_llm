@@ -34,9 +34,9 @@ check() {
   started=$(date +%s%N)
   if out=$(curl -sS --max-time 120 "${ACCESS[@]}" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" "$target" -d "$body"); then
     ms=$(( ($(date +%s%N) - started) / 1000000 ))
-    if ! echo "$out" | grep -q "$expect"; then
+    if ! grep -qF -- "$expect" <<<"$out"; then
       echo "FAIL $name — unexpected response: ${out:0:300}"; fail=1
-    elif [ -n "$warn" ] && echo "$out" | grep -q "$warn"; then
+    elif [ -n "$warn" ] && grep -qF -- "$warn" <<<"$out"; then
       echo "warn $name (${ms} ms) — response contains $warn (core-api strips it; update llama.cpp)"
     else
       echo "ok   $name (${ms} ms)"
@@ -96,7 +96,8 @@ if [[ "$PROFILES" == *",docling,"* ]] && [ "$MODE" != "--public" ]; then
 fi
 
 if [[ "$PROFILES" == *",tunnel,"* ]] && [ "$MODE" != "--public" ]; then
-  if docker compose logs --tail=200 cloudflared 2>/dev/null | grep -q "Registered tunnel connection"; then
+  tunnel_logs="$(docker compose logs --tail=200 cloudflared 2>/dev/null || true)"
+  if grep -qF "Registered tunnel connection" <<<"$tunnel_logs"; then
     echo "ok   cloudflared connected to Cloudflare"
   else
     echo "FAIL cloudflared has no registered tunnel connection (docker compose logs cloudflared)"; fail=1
