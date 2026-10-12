@@ -31,6 +31,14 @@ if [[ "$PROFILES" == *",docling,"* ]]; then
   [ "$(env_value DOCLING_API_KEY | wc -c)" -gt 32 ] || die "docling profile is on but DOCLING_API_KEY is empty/short — without it the parser accepts anyone"
 fi
 [[ "$PROFILES" == *",rerank-cpu,"* || "$PROFILES" == *",rerank-gpu,"* ]] || die "COMPOSE_PROFILES must include rerank-cpu or rerank-gpu"
+if [[ "$PROFILES" == *",tunnel,"* ]]; then
+  [ -s secrets/cloudflared_token ] || die "tunnel profile is on but secrets/cloudflared_token is missing — see README (Cloudflare Tunnel)"
+  # cloudflared runs as a non-root user inside its container, so the file must be readable;
+  # the secrets/ directory itself stays 700, which keeps other users on this machine out.
+  [ "$(stat -c %a secrets/cloudflared_token)" = "644" ] || die "chmod 644 secrets/cloudflared_token (secrets/ stays chmod 700)"
+  [ "$(stat -c %a secrets)" = "700" ] || log "warn: chmod 700 secrets"
+  [ "$BIND_ADDR" = "127.0.0.1" ] || log "warn: with the tunnel, BIND_ADDR=127.0.0.1 keeps the servers off the office network entirely"
+fi
 
 command -v nvidia-smi >/dev/null && nvidia-smi >/dev/null || die "nvidia-smi failed — GPU driver not working"
 docker compose version >/dev/null || die "docker compose plugin missing"
