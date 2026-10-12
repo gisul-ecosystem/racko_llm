@@ -1,0 +1,133 @@
+# Racko chatbot models on one RTX 3060 (8 GB) — llama.cpp `llama-server`, OpenAI-compatible.
+#
+#   chat    :8080  POST /v1/chat/completions   (Qwen3, thinking off, tool calling via --jinja)
+#   embed   :8081  POST /v1/embeddings         (Qwen3-Embedding-0.6B)
+#   rerank  :8082  POST /v1/rerank             (bge-reranker-v2-m3)
+#   docling :5001  POST /v1/convert/file       (optional — PDF/DOCX/PPTX parsing for the knowledge base)
+#
+# Pick a profile in .env (see env.example):
+#   Profile A (default) — Qwen3-8B on GPU, reranker on CPU      COMPOSE_PROFILES=rerank-cpu
+#   Profile B (lighter) — Qwen3-4B on GPU, reranker on GPU      COMPOSE_PROFILES=rerank-gpu
+# Add ",docling" to COMPOSE_PROFILES to also run the document parser here.
+#
+# Usage:  cp env.example .env  &&  edit .env  &&  docker compose up -d  &&  ./smoke-test.sh
+
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+x-common: &common
+  restart: unless-stopped
+  environment:
+    # Downloaded GGUF files are cached here, so restarts don't re-download.
+    LLAMA_CACHE: /models
+    HF_TOKEN: ${HF_TOKEN:-}
+  volumes:
+    - models:/models
+
+services:
+  chat:
+    <<: [*common, *gpu]
+    image: ${LLAMA_CUDA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    container_name: racko-llm-chat
+    ports:
+      - "${BIND_ADDR:-0.0.0.0}:8080:8080"
+    command:
+      - --host=0.0.0.0
+      - --port=8080
+      - --hf-repo=${CHAT_MODEL:-Qwen/Qwen3-8B-GGUF:Q4_K_M}
+      - --alias=${CHAT_MODEL_ALIAS:-qwen3-8b}
+      - --api-key=${LLM_API_KEY:?Set LLM_API_KEY in .env}
+      - --n-gpu-layers=99
+      - --ctx-size=${CHAT_CTX:-8192}
+      # One request at a time gets the full context; others queue (core-api falls back to OpenAI on timeout).
+      - --parallel=1
+      # 8-bit KV cache halves its VRAM (needs flash attention).
+      - --flash-attn=on
+      - --cache-type-k=q8_0
+      - --cache-type-v=q8_0
+      # Model's own chat template (needed for tool calling); reasoning off = Qwen3 answers without a <think> phase.
+      - --jinja
+      - --reasoning=off
+      - --metrics
+
+  embed:
+    <<: [*common, *gpu]
+    image: ${LLAMA_CUDA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    container_name: racko-llm-embed
+    ports:
+      - "${BIND_ADDR:-0.0.0.0}:8081:8080"
+    command:
+      - --host=0.0.0.0
+      - --port=8080
+      - --hf-repo=${EMBED_MODEL:-Qwen/Qwen3-Embedding-0.6B-GGUF:Q8_0}
+      - --alias=${EMBED_MODEL_ALIAS:-qwen3-embedding-0.6b}
+      - --api-key=${LLM_API_KEY:?Set LLM_API_KEY in .env}
+      - --n-gpu-layers=99
+      - --embedding
+      # Qwen3-Embedding uses last-token pooling.
+      - --pooling=last
+      - --ctx-size=8192
+      - --batch-size=8192
+      - --ubatch-size=8192
+
+  # Profile A: reranker on CPU so Qwen3-8B fits on the 8 GB card. No GPU reservation.
+  rerank-cpu:
+    <<: *common
+    profiles: [rerank-cpu]
+    image: ${LLAMA_CPU_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
+    container_name: racko-llm-rerank
+    ports:
+      - "${BIND_ADDR:-0.0.0.0}:8082:8080"
+    command:
+      - --host=0.0.0.0
+      - --port=8080
+      - --hf-repo=${RERANK_MODEL:-gpustack/bge-reranker-v2-m3-GGUF:Q8_0}
+      - --alias=${RERANK_MODEL_ALIAS:-bge-reranker-v2-m3}
+      - --api-key=${LLM_API_KEY:?Set LLM_API_KEY in .env}
+      - --embedding
+      - --pooling=rank
+      - --reranking
+      - --ctx-size=8192
+      - --batch-size=8192
+      - --ubatch-size=8192
+
+  # Profile B: reranker on GPU (use with the lighter Qwen3-4B chat model).
+  rerank-gpu:
+    <<: [*common, *gpu]
+    profiles: [rerank-gpu]
+    image: ${LLAMA_CUDA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    container_name: racko-llm-rerank
+    ports:
+      - "${BIND_ADDR:-0.0.0.0}:8082:8080"
+    command:
+      - --host=0.0.0.0
+      - --port=8080
+      - --hf-repo=${RERANK_MODEL:-gpustack/bge-reranker-v2-m3-GGUF:Q8_0}
+      - --alias=${RERANK_MODEL_ALIAS:-bge-reranker-v2-m3}
+      - --api-key=${LLM_API_KEY:?Set LLM_API_KEY in .env}
+      - --n-gpu-layers=99
+      - --embedding
+      - --pooling=rank
+      - --reranking
+      - --ctx-size=8192
+      - --batch-size=8192
+      - --ubatch-size=8192
+
+  # Optional document parser for knowledge-base uploads (CPU; needs ~3–4 GB RAM).
+  # Can run on the app server instead if this machine is short on RAM.
+  docling:
+    profiles: [docling]
+    image: ${DOCLING_IMAGE:-ghcr.io/docling-project/docling-serve-cpu:latest}
+    container_name: racko-docling
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDR:-0.0.0.0}:5001:5001"
+
+volumes:
+  models:

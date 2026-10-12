@@ -1,0 +1,15 @@
+# Real secrets live only on the GPU machine
+.env
+*.env
+!env.example
+
+# Model weights are downloaded on the machine, never committed
+models/
+*.gguf
+*.safetensors
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
