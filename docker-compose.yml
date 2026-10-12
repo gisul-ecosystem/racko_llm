@@ -92,6 +92,10 @@ services:
     <<: [*llama, *gpu]
     image: *llama_cuda
     container_name: racko-llm-embed
+    # Load after the chat model: the largest allocation must win the shared 8 GB first.
+    depends_on:
+      chat:
+        condition: service_healthy
     ports:
       - "${BIND_ADDR:?Set BIND_ADDR in .env}:8081:8080"
     command:
@@ -112,11 +116,11 @@ services:
       - --pooling
       - "last"
       - --ctx-size
-      - "8192"
+      - "2048"
       - --batch-size
-      - "8192"
+      - "2048"
       - --ubatch-size
-      - "8192"
+      - "2048"
       - --metrics
 
   # Profile A: reranker on CPU so the 8B chat model fits on the 8 GB card.
@@ -151,11 +155,11 @@ services:
       - "rank"
       - --reranking
       - --ctx-size
-      - "8192"
+      - "4096"
       - --batch-size
-      - "8192"
+      - "4096"
       - --ubatch-size
-      - "8192"
+      - "4096"
       - --metrics
 
   # Profile B: reranker on GPU (with the lighter 4B chat model).
@@ -164,6 +168,10 @@ services:
     profiles: [rerank-gpu]
     image: *llama_cuda
     container_name: racko-llm-rerank
+    # Load after the chat model: the largest allocation must win the shared 8 GB first.
+    depends_on:
+      chat:
+        condition: service_healthy
     networks:
       default:
         # Both reranker profiles answer at http://rerank:8080 for the tunnel.
@@ -188,11 +196,11 @@ services:
       - "rank"
       - --reranking
       - --ctx-size
-      - "8192"
+      - "2048"
       - --batch-size
-      - "8192"
+      - "2048"
       - --ubatch-size
-      - "8192"
+      - "2048"
       - --metrics
 
   # Document parser for knowledge-base uploads (CPU, ~3–4 GB RAM). Requests need header X-Api-Key.
