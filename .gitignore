@@ -13,3 +13,7 @@ models/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Secrets and downloaded files
+secrets/
+*.part

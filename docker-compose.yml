@@ -1,16 +1,17 @@
-# Racko chatbot models on one RTX 3060 (8 GB) — llama.cpp `llama-server`, OpenAI-compatible.
+# Racko chatbot model servers — one RTX 3060 (8 GB). llama.cpp `llama-server`, OpenAI-compatible.
 #
-#   chat    :8080  POST /v1/chat/completions   (Qwen3, thinking off, tool calling via --jinja)
-#   embed   :8081  POST /v1/embeddings         (Qwen3-Embedding-0.6B)
-#   rerank  :8082  POST /v1/rerank             (bge-reranker-v2-m3)
-#   docling :5001  POST /v1/convert/file       (optional — PDF/DOCX/PPTX parsing for the knowledge base)
+#   chat     :8080  POST /v1/chat/completions   Qwen3 (thinking off; tool calling via --jinja)
+#   embed    :8081  POST /v1/embeddings         Qwen3-Embedding-0.6B
+#   rerank   :8082  POST /v1/rerank             bge-reranker-v2-m3
+#   docling  :5001  POST /v1/convert/file       optional — PDF/DOCX/PPTX parsing      (profile: docling)
+#   gpu-exporter :9835  /metrics                optional — GPU memory/temp/util       (profile: monitoring)
 #
-# Pick a profile in .env (see env.example):
-#   Profile A (default) — Qwen3-8B on GPU, reranker on CPU      COMPOSE_PROFILES=rerank-cpu
-#   Profile B (lighter) — Qwen3-4B on GPU, reranker on GPU      COMPOSE_PROFILES=rerank-gpu
-# Add ",docling" to COMPOSE_PROFILES to also run the document parser here.
+# Production rules baked in:
+#   - images pinned by tag AND digest; models are local files pinned by SHA-256 (models.lock)
+#   - API key read from a Docker secret file, never on the command line or in `docker inspect`
+#   - ports bound only to BIND_ADDR (private / WireGuard IP), health checks, log rotation, CPU/RAM caps
 #
-# Usage:  cp env.example .env  &&  edit .env  &&  docker compose up -d  &&  ./smoke-test.sh
+# First time: see README.md.  Updates: ./deploy.sh
 
 x-gpu: &gpu
   deploy:
@@ -21,53 +22,71 @@ x-gpu: &gpu
             count: all
             capabilities: [gpu]
 
-x-common: &common
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+x-llama: &llama
+  <<: *logging
   restart: unless-stopped
-  environment:
-    # Downloaded GGUF files are cached here, so restarts don't re-download.
-    LLAMA_CACHE: /models
-    HF_TOKEN: ${HF_TOKEN:-}
   volumes:
-    - models:/models
+    - ./models:/models:ro
+  secrets:
+    - llm_api_key
+  healthcheck:
+    test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    # /health answers 503 until the model is in memory.
+    start_period: 300s
+
+# llama.cpp release v0.6.0 (= build b11429). Upgrade by changing both tag and digest, then ./deploy.sh.
+x-images:
+  cuda: &llama_cuda ghcr.io/ggml-org/llama.cpp:server-cuda-b11429@sha256:883915ea20a4b350e98f7284098f4d400c21e9b366e248d397cd42d90602a84c
+  cpu: &llama_cpu ghcr.io/ggml-org/llama.cpp:server-b11429@sha256:2f8ebc2dde83c4bd7e5c6d61efa57965e0d5a79d29802c246c4593740d9c04c1
 
 services:
   chat:
-    <<: [*common, *gpu]
-    image: ${LLAMA_CUDA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    <<: [*llama, *gpu]
+    image: *llama_cuda
     container_name: racko-llm-chat
     ports:
-      - "${BIND_ADDR:-0.0.0.0}:8080:8080"
+      - "${BIND_ADDR:?Set BIND_ADDR in .env to this machine's private or WireGuard IP}:8080:8080"
     command:
       - --host=0.0.0.0
       - --port=8080
-      - --hf-repo=${CHAT_MODEL:-Qwen/Qwen3-8B-GGUF:Q4_K_M}
+      - --model=/models/${CHAT_MODEL_FILE:?Set CHAT_MODEL_FILE in .env}
       - --alias=${CHAT_MODEL_ALIAS:-qwen3-8b}
-      - --api-key=${LLM_API_KEY:?Set LLM_API_KEY in .env}
+      - --api-key-file=/run/secrets/llm_api_key
       - --n-gpu-layers=99
       - --ctx-size=${CHAT_CTX:-8192}
-      # One request at a time gets the full context; others queue (core-api falls back to OpenAI on timeout).
+      # One request at a time gets the full context; others queue. core-api switches to OpenAI when slow.
       - --parallel=1
-      # 8-bit KV cache halves its VRAM (needs flash attention).
+      # 8-bit KV cache halves its VRAM (requires flash attention).
       - --flash-attn=on
       - --cache-type-k=q8_0
       - --cache-type-v=q8_0
-      # Model's own chat template (needed for tool calling); reasoning off = Qwen3 answers without a <think> phase.
+      # Model's own chat template (needed for tool calling); reasoning off = no <think> phase.
       - --jinja
       - --reasoning=off
       - --metrics
 
   embed:
-    <<: [*common, *gpu]
-    image: ${LLAMA_CUDA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    <<: [*llama, *gpu]
+    image: *llama_cuda
     container_name: racko-llm-embed
     ports:
-      - "${BIND_ADDR:-0.0.0.0}:8081:8080"
+      - "${BIND_ADDR:?Set BIND_ADDR in .env}:8081:8080"
     command:
       - --host=0.0.0.0
       - --port=8080
-      - --hf-repo=${EMBED_MODEL:-Qwen/Qwen3-Embedding-0.6B-GGUF:Q8_0}
+      - --model=/models/${EMBED_MODEL_FILE:?Set EMBED_MODEL_FILE in .env}
       - --alias=${EMBED_MODEL_ALIAS:-qwen3-embedding-0.6b}
-      - --api-key=${LLM_API_KEY:?Set LLM_API_KEY in .env}
+      - --api-key-file=/run/secrets/llm_api_key
       - --n-gpu-layers=99
       - --embedding
       # Qwen3-Embedding uses last-token pooling.
@@ -75,42 +94,47 @@ services:
       - --ctx-size=8192
       - --batch-size=8192
       - --ubatch-size=8192
+      - --metrics
 
-  # Profile A: reranker on CPU so Qwen3-8B fits on the 8 GB card. No GPU reservation.
+  # Profile A: reranker on CPU so the 8B chat model fits on the 8 GB card.
   rerank-cpu:
-    <<: *common
+    <<: *llama
     profiles: [rerank-cpu]
-    image: ${LLAMA_CPU_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
+    image: *llama_cpu
     container_name: racko-llm-rerank
+    cpus: ${RERANK_CPUS:-4}
+    mem_limit: 3g
     ports:
-      - "${BIND_ADDR:-0.0.0.0}:8082:8080"
+      - "${BIND_ADDR:?Set BIND_ADDR in .env}:8082:8080"
     command:
       - --host=0.0.0.0
       - --port=8080
-      - --hf-repo=${RERANK_MODEL:-gpustack/bge-reranker-v2-m3-GGUF:Q8_0}
+      - --model=/models/${RERANK_MODEL_FILE:?Set RERANK_MODEL_FILE in .env}
       - --alias=${RERANK_MODEL_ALIAS:-bge-reranker-v2-m3}
-      - --api-key=${LLM_API_KEY:?Set LLM_API_KEY in .env}
+      - --api-key-file=/run/secrets/llm_api_key
+      - --threads=${RERANK_CPUS:-4}
       - --embedding
       - --pooling=rank
       - --reranking
       - --ctx-size=8192
       - --batch-size=8192
       - --ubatch-size=8192
+      - --metrics
 
-  # Profile B: reranker on GPU (use with the lighter Qwen3-4B chat model).
+  # Profile B: reranker on GPU (with the lighter 4B chat model).
   rerank-gpu:
-    <<: [*common, *gpu]
+    <<: [*llama, *gpu]
     profiles: [rerank-gpu]
-    image: ${LLAMA_CUDA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    image: *llama_cuda
     container_name: racko-llm-rerank
     ports:
-      - "${BIND_ADDR:-0.0.0.0}:8082:8080"
+      - "${BIND_ADDR:?Set BIND_ADDR in .env}:8082:8080"
     command:
       - --host=0.0.0.0
       - --port=8080
-      - --hf-repo=${RERANK_MODEL:-gpustack/bge-reranker-v2-m3-GGUF:Q8_0}
+      - --model=/models/${RERANK_MODEL_FILE:?Set RERANK_MODEL_FILE in .env}
       - --alias=${RERANK_MODEL_ALIAS:-bge-reranker-v2-m3}
-      - --api-key=${LLM_API_KEY:?Set LLM_API_KEY in .env}
+      - --api-key-file=/run/secrets/llm_api_key
       - --n-gpu-layers=99
       - --embedding
       - --pooling=rank
@@ -118,16 +142,45 @@ services:
       - --ctx-size=8192
       - --batch-size=8192
       - --ubatch-size=8192
+      - --metrics
 
-  # Optional document parser for knowledge-base uploads (CPU; needs ~3–4 GB RAM).
-  # Can run on the app server instead if this machine is short on RAM.
+  # Document parser for knowledge-base uploads (CPU, ~3–4 GB RAM). Requests need header X-Api-Key.
   docling:
+    <<: *logging
     profiles: [docling]
-    image: ${DOCLING_IMAGE:-ghcr.io/docling-project/docling-serve-cpu:latest}
+    image: ghcr.io/docling-project/docling-serve-cpu:v1.36.0@sha256:225c8586e20d5d0fc6811a9e0e044fa602bcc4393f00389009bad42d6787b58f
     container_name: racko-docling
     restart: unless-stopped
+    cpus: ${DOCLING_CPUS:-4}
+    mem_limit: ${DOCLING_MEM:-6g}
+    environment:
+      # deploy.sh refuses to start docling without a key (an empty key would disable auth).
+      DOCLING_SERVE_API_KEY: ${DOCLING_API_KEY:-}
+      DOCLING_SERVE_ENABLE_API_DOCS: "false"
+      # Same ceiling as core-api's upload limit (CHATBOT_KB_MAX_UPLOAD_MB=25).
+      DOCLING_SERVE_MAX_FILE_SIZE: "26214400"
+      DOCLING_SERVE_MAX_NUM_PAGES: "300"
+      UVICORN_WORKERS: "1"
+      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: "2"
     ports:
-      - "${BIND_ADDR:-0.0.0.0}:5001:5001"
+      - "${BIND_ADDR:?Set BIND_ADDR in .env}:5001:5001"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
 
-volumes:
-  models:
+  # GPU memory / temperature / utilisation for Prometheus (scrape http://BIND_ADDR:9835/metrics).
+  gpu-exporter:
+    <<: [*logging, *gpu]
+    profiles: [monitoring]
+    image: utkuozdemir/nvidia_gpu_exporter:1.15.1@sha256:7aee2d42836ad29d4adb2722b7cfdc806ec9cc8d45fd0b8971ebbad2d9f3d087
+    container_name: racko-gpu-exporter
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDR:?Set BIND_ADDR in .env}:9835:9835"
+
+secrets:
+  llm_api_key:
+    file: ./secrets/llm_api_key
