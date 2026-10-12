@@ -45,6 +45,7 @@ x-llama: &llama
     start_period: 300s
 
 # llama.cpp release v0.6.0 (= build b11429). Upgrade by changing both tag and digest, then ./deploy.sh.
+# llama-server takes "--option value" as two arguments; "--option=value" is rejected as an invalid argument.
 x-images:
   cuda: &llama_cuda ghcr.io/ggml-org/llama.cpp:server-cuda-b11429@sha256:883915ea20a4b350e98f7284098f4d400c21e9b366e248d397cd42d90602a84c
   cpu: &llama_cpu ghcr.io/ggml-org/llama.cpp:server-b11429@sha256:2f8ebc2dde83c4bd7e5c6d61efa57965e0d5a79d29802c246c4593740d9c04c1
@@ -57,22 +58,34 @@ services:
     ports:
       - "${BIND_ADDR:?Set BIND_ADDR in .env to this machine's private or WireGuard IP}:8080:8080"
     command:
-      - --host=0.0.0.0
-      - --port=8080
-      - --model=/models/${CHAT_MODEL_FILE:?Set CHAT_MODEL_FILE in .env}
-      - --alias=${CHAT_MODEL_ALIAS:-qwen3-8b}
-      - --api-key-file=/run/secrets/llm_api_key
-      - --n-gpu-layers=99
-      - --ctx-size=${CHAT_CTX:-8192}
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8080"
+      - --model
+      - "/models/${CHAT_MODEL_FILE:?Set CHAT_MODEL_FILE in .env}"
+      - --alias
+      - "${CHAT_MODEL_ALIAS:-qwen3-8b}"
+      - --api-key-file
+      - "/run/secrets/llm_api_key"
+      - --n-gpu-layers
+      - "99"
+      - --ctx-size
+      - "${CHAT_CTX:-8192}"
       # One request at a time gets the full context; others queue. core-api switches to OpenAI when slow.
-      - --parallel=1
+      - --parallel
+      - "1"
       # 8-bit KV cache halves its VRAM (requires flash attention).
-      - --flash-attn=on
-      - --cache-type-k=q8_0
-      - --cache-type-v=q8_0
+      - --flash-attn
+      - "on"
+      - --cache-type-k
+      - "q8_0"
+      - --cache-type-v
+      - "q8_0"
       # Model's own chat template (needed for tool calling); reasoning off = no <think> phase.
       - --jinja
-      - --reasoning=off
+      - --reasoning
+      - "off"
       - --metrics
 
   embed:
@@ -82,18 +95,28 @@ services:
     ports:
       - "${BIND_ADDR:?Set BIND_ADDR in .env}:8081:8080"
     command:
-      - --host=0.0.0.0
-      - --port=8080
-      - --model=/models/${EMBED_MODEL_FILE:?Set EMBED_MODEL_FILE in .env}
-      - --alias=${EMBED_MODEL_ALIAS:-qwen3-embedding-0.6b}
-      - --api-key-file=/run/secrets/llm_api_key
-      - --n-gpu-layers=99
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8080"
+      - --model
+      - "/models/${EMBED_MODEL_FILE:?Set EMBED_MODEL_FILE in .env}"
+      - --alias
+      - "${EMBED_MODEL_ALIAS:-qwen3-embedding-0.6b}"
+      - --api-key-file
+      - "/run/secrets/llm_api_key"
+      - --n-gpu-layers
+      - "99"
       - --embedding
       # Qwen3-Embedding uses last-token pooling.
-      - --pooling=last
-      - --ctx-size=8192
-      - --batch-size=8192
-      - --ubatch-size=8192
+      - --pooling
+      - "last"
+      - --ctx-size
+      - "8192"
+      - --batch-size
+      - "8192"
+      - --ubatch-size
+      - "8192"
       - --metrics
 
   # Profile A: reranker on CPU so the 8B chat model fits on the 8 GB card.
@@ -111,18 +134,28 @@ services:
     ports:
       - "${BIND_ADDR:?Set BIND_ADDR in .env}:8082:8080"
     command:
-      - --host=0.0.0.0
-      - --port=8080
-      - --model=/models/${RERANK_MODEL_FILE:?Set RERANK_MODEL_FILE in .env}
-      - --alias=${RERANK_MODEL_ALIAS:-bge-reranker-v2-m3}
-      - --api-key-file=/run/secrets/llm_api_key
-      - --threads=${RERANK_CPUS:-4}
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8080"
+      - --model
+      - "/models/${RERANK_MODEL_FILE:?Set RERANK_MODEL_FILE in .env}"
+      - --alias
+      - "${RERANK_MODEL_ALIAS:-bge-reranker-v2-m3}"
+      - --api-key-file
+      - "/run/secrets/llm_api_key"
+      - --threads
+      - "${RERANK_CPUS:-4}"
       - --embedding
-      - --pooling=rank
+      - --pooling
+      - "rank"
       - --reranking
-      - --ctx-size=8192
-      - --batch-size=8192
-      - --ubatch-size=8192
+      - --ctx-size
+      - "8192"
+      - --batch-size
+      - "8192"
+      - --ubatch-size
+      - "8192"
       - --metrics
 
   # Profile B: reranker on GPU (with the lighter 4B chat model).
@@ -138,18 +171,28 @@ services:
     ports:
       - "${BIND_ADDR:?Set BIND_ADDR in .env}:8082:8080"
     command:
-      - --host=0.0.0.0
-      - --port=8080
-      - --model=/models/${RERANK_MODEL_FILE:?Set RERANK_MODEL_FILE in .env}
-      - --alias=${RERANK_MODEL_ALIAS:-bge-reranker-v2-m3}
-      - --api-key-file=/run/secrets/llm_api_key
-      - --n-gpu-layers=99
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8080"
+      - --model
+      - "/models/${RERANK_MODEL_FILE:?Set RERANK_MODEL_FILE in .env}"
+      - --alias
+      - "${RERANK_MODEL_ALIAS:-bge-reranker-v2-m3}"
+      - --api-key-file
+      - "/run/secrets/llm_api_key"
+      - --n-gpu-layers
+      - "99"
       - --embedding
-      - --pooling=rank
+      - --pooling
+      - "rank"
       - --reranking
-      - --ctx-size=8192
-      - --batch-size=8192
-      - --ubatch-size=8192
+      - --ctx-size
+      - "8192"
+      - --batch-size
+      - "8192"
+      - --ubatch-size
+      - "8192"
       - --metrics
 
   # Document parser for knowledge-base uploads (CPU, ~3–4 GB RAM). Requests need header X-Api-Key.
