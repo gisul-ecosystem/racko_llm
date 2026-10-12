@@ -35,10 +35,12 @@ if [[ "$PROFILES" == *",docling,"* ]]; then
 fi
 [[ "$PROFILES" == *",rerank-cpu,"* || "$PROFILES" == *",rerank-gpu,"* ]] || die "COMPOSE_PROFILES must include rerank-cpu or rerank-gpu"
 if [[ "$PROFILES" == *",tunnel,"* ]]; then
-  [ -s secrets/cloudflared_token ] || die "tunnel profile is on but secrets/cloudflared_token is missing — see README (Cloudflare Tunnel)"
+  [ -s secrets/cloudflared_credentials.json ] || die "tunnel profile is on but the tunnel isn't set up — run ./tunnel-setup.sh (README: Cloudflare Tunnel)"
+  [ -n "$(env_value CLOUDFLARED_TUNNEL_ID)" ] || die "CLOUDFLARED_TUNNEL_ID is empty in .env — ./tunnel-setup.sh writes it"
+  [ -f cloudflared/config.yml ] || die "cloudflared/config.yml (the routes) is missing — git checkout cloudflared/config.yml"
   # cloudflared runs as a non-root user inside its container, so the file must be readable;
   # the secrets/ directory itself stays 700, which keeps other users on this machine out.
-  [ "$(stat -c %a secrets/cloudflared_token)" = "644" ] || die "chmod 644 secrets/cloudflared_token (secrets/ stays chmod 700)"
+  [ "$(stat -c %a secrets/cloudflared_credentials.json)" = "644" ] || die "chmod 644 secrets/cloudflared_credentials.json (secrets/ stays chmod 700)"
   [ "$(stat -c %a secrets)" = "700" ] || log "warn: chmod 700 secrets"
   [ "$BIND_ADDR" = "127.0.0.1" ] || log "warn: with the tunnel, BIND_ADDR=127.0.0.1 keeps the servers off the office network entirely"
 fi

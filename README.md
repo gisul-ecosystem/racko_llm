@@ -27,7 +27,7 @@ core-api (Proxmox VM) ──HTTPS──▶ Cloudflare (Access: service token req
 | Encryption | HTTPS to Cloudflare, tunnel to this machine; servers listen on `127.0.0.1` only |
 | Reproducible software | Images pinned by tag **and** digest (llama.cpp v0.6.0 = b11429, cloudflared 2026.10.0, docling-serve v1.36.0) |
 | Reproducible models | `models.lock` pins file, Hugging Face commit, size and SHA-256; servers load local files only |
-| Secrets | `secrets/llm_api_key` and `secrets/cloudflared_token` are Docker secrets — not in `.env`, the command line or `docker inspect` |
+| Secrets | `secrets/llm_api_key` and `secrets/cloudflared_credentials.json` are Docker secrets — not in `.env`, the command line or `docker inspect`; the Cloudflare account certificate is deleted after setup |
 | Liveness / updates | Health checks; `deploy.sh` preflight → update → verify models → health → smoke test → **automatic rollback** |
 | Resources / disk | CPU/RAM caps on CPU services; log rotation (5 × 20 MB per container) |
 | Observability | llama.cpp `/metrics`, cloudflared metrics, optional GPU exporter |
@@ -82,50 +82,54 @@ The `WARN … not found` lines from `cdi generate` (Vulkan, imex, fabricmanager)
 
 ```bash
 git clone https://github.com/gisul-ecosystem/racko_llm.git ~/racko_llm && cd ~/racko_llm
-cp env.example .env && chmod 600 .env       # defaults: BIND_ADDR=127.0.0.1, Profile A + tunnel
-nano .env                                   # optional: CHAT_CTX=6144 if a desktop session uses the GPU
+cp env.example .env && chmod 600 .env       # defaults: BIND_ADDR=127.0.0.1, Profile A, no tunnel yet
 mkdir -p secrets && chmod 700 secrets
 openssl rand -hex 32 > secrets/llm_api_key && chmod 600 secrets/llm_api_key
 ```
 
-### 4. Cloudflare (dashboard, once — needs access to the racko.ai Cloudflare account)
-
-**a. Tunnel** — Zero Trust → Networks → Tunnels → **Create a tunnel** → Cloudflared → name `racko-llm-gpu`.
-On the install screen copy only the **token** (the long string after `--token`). Save it on this machine:
+### 4. Deploy the models and test them on this machine
 
 ```bash
-cd ~/racko_llm
-nano secrets/cloudflared_token        # paste the token, save
-chmod 644 secrets/cloudflared_token   # cloudflared runs as a non-root user; secrets/ stays 700
+./deploy.sh --no-pull     # downloads ~6 GB of models (SHA-256 verified), starts, health-checks, smoke-tests
 ```
 
-**b. Routes** — in the tunnel → **Public hostnames** (published application routes), add **in this order**
-(more specific paths first; service type HTTP):
+All smoke-test lines must say `ok`. Close GPU-heavy desktop apps first (browser, VS Code): with Qwen3-8B the
+three servers plus a desktop session use ~7.3 of 8.2 GB.
 
-| # | Hostname | Path | Service |
-|---|---|---|---|
-| 1 | `llm.racko.ai` | `^/v1/embeddings` | `http://embed:8080` |
-| 2 | `llm.racko.ai` | `^/v1/rerank` | `http://rerank:8080` |
-| 3 | `llm.racko.ai` | *(empty)* | `http://chat:8080` |
+### 5. Cloudflare Tunnel and Access (once)
 
-**c. Access (lock it down)** — Zero Trust → Access → Service credentials → **Service tokens** → Create
-`racko-core-api` → copy **Client ID** and **Client Secret** (shown once; they go into core-api's `.env`, not here).
-Then Access → Applications → **Add** → Self-hosted → domain `llm.racko.ai` → policy: Action **Service Auth**,
-Include **Service Token = racko-core-api**. Without this policy the models would be open to the internet
-behind only the API key.
-
-**d. Bot protection** — if `racko.ai` has Bot Fight Mode / WAF challenges, make sure they don't challenge
-`llm.racko.ai` (server-to-server calls can't solve challenges). `./smoke-test.sh --public` detects this.
-
-### 5. Deploy and test
+**a. Tunnel — one command here, one click by a Cloudflare admin.**
 
 ```bash
-./deploy.sh --no-pull     # first run downloads ~6 GB of models (SHA-256 verified), starts, health-checks, smoke-tests
+./tunnel-setup.sh
+```
+
+It prints a Cloudflare login link. Someone with access to the **racko.ai** Cloudflare account opens it, signs in,
+selects **racko.ai** and clicks **Authorize**. The script then creates the tunnel `racko-llm-gpu`, the DNS record
+`llm.racko.ai`, saves the tunnel's own credentials to `secrets/cloudflared_credentials.json`, writes
+`CLOUDFLARED_TUNNEL_ID` to `.env`, and **deletes the account certificate** it received (the running tunnel never
+needs it). The routes (`/v1/embeddings` → embed, `/v1/rerank` → rerank, everything else → chat) are in
+[`cloudflared/config.yml`](cloudflared/config.yml), versioned here — no dashboard routes to click.
+
+**b. Access (lock it down) — Cloudflare dashboard, by the same admin.** Zero Trust → Access → Service credentials →
+**Service tokens** → Create `racko-core-api` → copy **Client ID** and **Client Secret** (shown once; they go into
+core-api's `.env`, not here). Then Access → Applications → **Add** → Self-hosted → domain `llm.racko.ai` → one policy:
+Action **Service Auth**, Include **Service Token = racko-core-api**, no other Allow policies. Without this the models
+would be reachable from the internet behind only the API key.
+
+**c. Bot protection** — make sure Bot Fight Mode / WAF challenges don't apply to `llm.racko.ai`
+(server-to-server calls can't solve challenges). The public smoke test detects this.
+
+**d. Turn the tunnel on and test it end to end**
+
+```bash
+sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=rerank-cpu,tunnel/' .env
+./deploy.sh --no-pull
 CF_ACCESS_CLIENT_ID=<id> CF_ACCESS_CLIENT_SECRET=<secret> ./smoke-test.sh --public
 ```
 
-The public test calls `https://llm.racko.ai` exactly like core-api, and also checks that Cloudflare blocks
-callers **without** the service token and the servers block callers without the API key. All lines must say `ok`.
+The public test calls `https://llm.racko.ai` exactly like core-api, and checks that Cloudflare blocks callers
+**without** the service token and the servers block callers without the API key. All lines must say `ok`.
 
 ### 6. Point core-api at it
 
@@ -190,7 +194,7 @@ commit, then `./deploy.sh` on the machine. Changing the **embedding** model also
 
 **Rotating credentials**: API key — new `secrets/llm_api_key`, `./deploy.sh --no-pull`, update core-api. Access token —
 create a new service token in Cloudflare, add it to the policy, update core-api, then delete the old one.
-Tunnel token — Cloudflare → tunnel → Refresh token, update `secrets/cloudflared_token`, `./deploy.sh --no-pull`.
+Tunnel credentials — delete the tunnel in Cloudflare (Networks → Tunnels), remove `secrets/cloudflared_credentials.json`, run `./tunnel-setup.sh` again, `./deploy.sh --no-pull`.
 
 ### Monitoring and alerts
 
@@ -207,9 +211,10 @@ Minimum without Prometheus: a cron elsewhere running the `--public` smoke test e
 
 | Symptom | Fix |
 |---|---|
-| `deploy.sh`: `chmod 644 secrets/cloudflared_token` | cloudflared runs non-root; keep `secrets/` at 700 |
+| `deploy.sh`: `chmod 644 secrets/cloudflared_credentials.json` | cloudflared runs non-root; keep `secrets/` at 700 |
+| `tunnel-setup.sh`: could not create the tunnel | a tunnel named `racko-llm-gpu` already exists — delete it in Cloudflare or run `TUNNEL_NAME=<new> ./tunnel-setup.sh` |
 | smoke test: `cloudflared has no registered tunnel connection` | wrong/expired token, or outbound HTTPS/7844 blocked — `docker compose logs cloudflared` |
-| `--public`: chat works but embeddings/rerank return chat errors | route order in Cloudflare: specific paths (`^/v1/embeddings`, `^/v1/rerank`) must be above the catch-all |
+| `--public`: chat works but embeddings/rerank return chat errors | rule order in `cloudflared/config.yml`: specific paths must come before the catch-all |
 | `--public`: `blocked by Cloudflare` / 403 HTML | Access policy or service token wrong, or a bot/WAF challenge on `llm.racko.ai` |
 | core-api: `blocked by Cloudflare (302)` | `CHATBOT_SELFHOSTED_CF_ACCESS_*` missing or not in the Access policy |
 | chat unhealthy, `out of memory` / `cudaMalloc failed` | close GPU apps, `CHAT_CTX=6144`, or Profile B → `./deploy.sh --no-pull` |

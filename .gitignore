@@ -17,3 +17,4 @@ Thumbs.db
 # Secrets and downloaded files
 secrets/
 *.part
+.cloudflared-setup/

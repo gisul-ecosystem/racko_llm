@@ -1,0 +1,17 @@
+# Cloudflare Tunnel routes for https://llm.racko.ai (locally-managed tunnel — the rules live here, in git).
+# Order matters: the first matching rule wins, so specific paths come before the catch-all.
+# Service names are the Docker Compose services on this machine, reached over the compose network.
+# Credentials (tunnel-specific, not the account cert) are mounted from secrets/cloudflared_credentials.json.
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  - hostname: llm.racko.ai
+    path: ^/v1/embeddings
+    service: http://embed:8080
+  - hostname: llm.racko.ai
+    path: ^/v1/rerank
+    service: http://rerank:8080
+  - hostname: llm.racko.ai
+    service: http://chat:8080
+  # Anything else that reaches this tunnel is refused.
+  - service: http_status:404
