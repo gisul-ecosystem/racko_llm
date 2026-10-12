@@ -3,8 +3,9 @@
 #
 #   ./smoke-test.sh            local: http://BIND_ADDR:8080-8082 (and :5001 with the docling profile)
 #   ./smoke-test.sh --public   through the Cloudflare Tunnel at LLM_PUBLIC_URL, exactly as core-api calls it.
-#                              Needs the Access service token core-api uses, passed for this run only:
+#                              If llm.racko.ai is behind Cloudflare Access, pass the service token core-api uses:
 #                              CF_ACCESS_CLIENT_ID=… CF_ACCESS_CLIENT_SECRET=… ./smoke-test.sh --public
+#                              Without it the API key is the only lock, and the test says so.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -18,9 +19,11 @@ fail=0
 if [ "$MODE" = "--public" ]; then
   BASE="$(env_value LLM_PUBLIC_URL)"; BASE="${BASE%/}"
   [ -n "$BASE" ] || { echo "Set LLM_PUBLIC_URL in .env (e.g. https://llm.racko.ai)"; exit 1; }
-  [ -n "${CF_ACCESS_CLIENT_ID:-}" ] && [ -n "${CF_ACCESS_CLIENT_SECRET:-}" ] \
-    || { echo "Pass CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET (the Access service token core-api uses)"; exit 1; }
-  ACCESS=(-H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET")
+  if [ -n "${CF_ACCESS_CLIENT_ID:-}" ] && [ -n "${CF_ACCESS_CLIENT_SECRET:-}" ]; then
+    ACCESS=(-H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET")
+  else
+    ACCESS=()
+  fi
   url() { echo "$BASE$2"; }        # one hostname; the tunnel routes by path
 else
   HOST="$(env_value BIND_ADDR)"
@@ -79,10 +82,14 @@ for target in "8080 /v1/chat/completions" "8081 /v1/embeddings" "8082 /v1/rerank
 done
 
 if [ "$MODE" = "--public" ]; then
-  # Without the Access service token Cloudflare must stop the request before it reaches this machine.
-  code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-    "$(url 0 /v1/embeddings)" -d '{"input":"x"}')
-  expect_blocked "Cloudflare Access blocks callers without the service token" "$code" 401 403 302
+  if [ ${#ACCESS[@]} -gt 0 ]; then
+    # Without the Access service token Cloudflare must stop the request before it reaches this machine.
+    code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+      "$(url 0 /v1/embeddings)" -d '{"input":"x"}')
+    expect_blocked "Cloudflare Access blocks callers without the service token" "$code" 401 403 302
+  else
+    echo "note no Cloudflare Access: $BASE is public; the API key is the only lock (keep secrets/llm_api_key secret)"
+  fi
 fi
 
 if [[ "$PROFILES" == *",docling,"* ]] && [ "$MODE" != "--public" ]; then
