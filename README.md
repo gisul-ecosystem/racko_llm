@@ -33,8 +33,9 @@ core-api (Proxmox VM) ──HTTPS──▶ Cloudflare (Access: service token req
 | Observability | llama.cpp `/metrics`, cloudflared metrics, optional GPU exporter |
 | Licences | Models Apache-2.0 (`models.lock`); llama.cpp, docling MIT; cloudflared Apache-2.0 |
 
-**Known limits:** one GPU = single point of failure and one answer at a time; chat falls back to OpenAI and
-search to keyword-only in core-api. Cloudflare closes responses that take **> 100 s** — fine for chat (~15 s)
+**Known limits:** one GPU = single point of failure; it answers one chat at a time in Profile A, four in
+Profile B (`CHAT_PARALLEL`), and further requests queue. Chat falls back to OpenAI and search to keyword-only
+in core-api. Cloudflare closes responses that take **> 100 s** — fine for chat (~15 s)
 and search, but **not for parsing big PDFs**, which is why docling belongs on the app server.
 This is an **office desktop**: keep it powered on, disable sleep, and keep other GPU apps closed.
 
@@ -44,10 +45,13 @@ This is an **office desktop**: keep it powered on, disable sleep, and keep other
 |---|---|---|
 | Chat model | Qwen3-8B | Qwen3-4B-Instruct-2507 |
 | Reranker on | CPU (+1–3 s per question) | GPU |
-| VRAM (approx.) | ~6.9 GB | ~5.2 GB |
-| Answers | Better | Good, ~2× faster; leaves room for desktop use |
+| Chats answered at once | 1 (`CHAT_PARALLEL=1`, `CHAT_CTX=6144`) | 4 (`CHAT_PARALLEL=4`, `CHAT_CTX=24576`) |
+| VRAM (approx.) | ~6.9 GB | ~5.8 GB (estimate; check `nvidia-smi`) |
+| Answers | Good | Good — Qwen's published scores for 4B-Instruct-2507 match 8B (non-thinking) on instruction following and beat it on most others; slightly weaker in non-English; ~2× faster |
 
 With a desktop session running (~300–700 MB of VRAM), use `CHAT_CTX=6144` for A, or choose B.
+`CHAT_CTX` is shared by the slots: keep `CHAT_CTX ≥ CHAT_PARALLEL × 6144`, the size of one chatbot request.
+After switching profiles, set `CHATBOT_SELFHOSTED_CHAT_MODEL` in the chatbot's `.env` to the new `CHAT_MODEL_ALIAS`.
 
 ---
 

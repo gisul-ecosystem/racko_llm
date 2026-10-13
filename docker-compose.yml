@@ -70,11 +70,14 @@ services:
       - "/run/secrets/llm_api_key"
       - --n-gpu-layers
       - "99"
+      # CHAT_CTX is shared by the slots: each request gets CHAT_CTX / CHAT_PARALLEL tokens. The chatbot needs
+      # about 4,800 per request (prompt ≤ ~4,200 + answer ≤ 600), so keep at least 6144 per slot
+      # (e.g. CHAT_PARALLEL=4 → CHAT_CTX=24576). Requests beyond CHAT_PARALLEL queue; core-api falls back
+      # to OpenAI when an answer doesn't start in time.
       - --ctx-size
       - "${CHAT_CTX:-8192}"
-      # One request at a time gets the full context; others queue. core-api switches to OpenAI when slow.
       - --parallel
-      - "1"
+      - "${CHAT_PARALLEL:-1}"
       # 8-bit KV cache halves its VRAM (requires flash attention).
       - --flash-attn
       - "on"
