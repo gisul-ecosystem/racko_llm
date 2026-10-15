@@ -49,10 +49,23 @@ command -v nvidia-smi >/dev/null && nvidia-smi >/dev/null || die "nvidia-smi fai
 docker compose version >/dev/null || die "docker compose plugin missing"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────────────────────
+# cloudflared reads cloudflared/config.yml only when it starts, and `up` doesn't restart it for a changed
+# mounted file. So restart it whenever the routes differ from the last ones it was started with.
+TUNNEL_STATE=.cloudflared-config.sha256
+restart_tunnel_if_routes_changed() {
+  [[ "$PROFILES" == *",tunnel,"* ]] || return 0
+  local now; now="$(sha256sum cloudflared/config.yml | cut -d' ' -f1)"
+  [ "$now" = "$(cat "$TUNNEL_STATE" 2>/dev/null || true)" ] && return 0
+  log "tunnel routes changed — restarting cloudflared"
+  docker compose restart cloudflared || return 1
+  echo "$now" > "$TUNNEL_STATE"
+}
+
 start() {
   ./fetch-models.sh || return 1
   docker compose pull --quiet || return 1
   docker compose up -d --remove-orphans || return 1
+  restart_tunnel_if_routes_changed || return 1
 }
 
 wait_healthy() {

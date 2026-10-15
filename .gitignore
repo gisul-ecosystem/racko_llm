@@ -18,3 +18,6 @@ Thumbs.db
 secrets/
 *.part
 .cloudflared-setup/
+
+# Written by deploy.sh: the tunnel routes cloudflared was last started with
+.cloudflared-config.sha256
