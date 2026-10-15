@@ -223,5 +223,7 @@ Minimum without Prometheus: a cron elsewhere running the `--public` smoke test e
 | `--public`: `blocked by Cloudflare` / 403 HTML | Access policy or service token wrong, or a bot/WAF challenge on `llm.racko.ai` |
 | core-api: `blocked by Cloudflare (302)` | `CHATBOT_SELFHOSTED_CF_ACCESS_*` missing or not in the Access policy |
 | chat unhealthy, `out of memory` / `cudaMalloc failed` | close GPU apps, `CHAT_CTX=6144`, or Profile B → `./deploy.sh --no-pull` |
+| chat keeps restarting / unhealthy after an out-of-memory crash | embed/rerank took its VRAM while it was down → `./deploy.sh --restart` (stops all, starts chat first) |
+| switched profile A ↔ B: `container name "/racko-llm-rerank" is already in use` | fixed in `deploy.sh` (removes the inactive reranker); by hand: `docker rm -f racko-llm-rerank`, then `./deploy.sh --no-pull` |
 | `fetch-models.sh` MISMATCH | corrupted download — run again; if it repeats, don't edit the hash, investigate |
 | Smoke test warns `<think>` | harmless (core-api strips it); newer llama.cpp image fixes it |

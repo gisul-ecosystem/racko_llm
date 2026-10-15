@@ -4,6 +4,8 @@
 #
 #   ./deploy.sh             pull origin/main, then deploy
 #   ./deploy.sh --no-pull   redeploy the current checkout (e.g. after editing .env)
+#   ./deploy.sh --restart   stop everything, then start in order (chat first) — e.g. chat keeps failing after
+#                           an out-of-memory crash because embed/rerank took its VRAM while it was down
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -61,9 +63,18 @@ restart_tunnel_if_routes_changed() {
   echo "$now" > "$TUNNEL_STATE"
 }
 
+# rerank-cpu and rerank-gpu share the container name racko-llm-rerank. After switching profiles the old one
+# still exists (it's not an orphan: its service is in the file), and `up` fails on the name clash.
+remove_inactive_reranker() {
+  local inactive=rerank-cpu
+  [[ "$PROFILES" == *",rerank-cpu,"* ]] && inactive=rerank-gpu
+  docker compose --profile "$inactive" rm --stop --force "$inactive" >/dev/null 2>&1 || true
+}
+
 start() {
   ./fetch-models.sh || return 1
   docker compose pull --quiet || return 1
+  remove_inactive_reranker
   docker compose up -d --remove-orphans || return 1
   restart_tunnel_if_routes_changed || return 1
 }
@@ -84,8 +95,16 @@ wait_healthy() {
 }
 
 # ── Update ──────────────────────────────────────────────────────────────────────────────────
+case "${1:-}" in
+  ""|--no-pull|--restart) ;;
+  *) die "unknown option $1 (use --no-pull or --restart)" ;;
+esac
 prev="$(git rev-parse HEAD)"
-if [ "${1:-}" != "--no-pull" ]; then
+if [ "${1:-}" = "--restart" ]; then
+  # Ordered restart of the current checkout: depends_on loads chat into VRAM before embed and rerank.
+  log "stopping all services for an ordered restart"
+  docker compose down || die "docker compose down failed"
+elif [ "${1:-}" != "--no-pull" ]; then
   git diff --quiet && git diff --cached --quiet || die "local changes in tracked files — commit or discard them first"
   git fetch --quiet origin
   git merge --ff-only --quiet origin/main || die "cannot fast-forward to origin/main"
