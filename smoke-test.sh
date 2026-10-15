@@ -35,8 +35,10 @@ check() {
   local name="$1" target="$2" body="$3" expect="$4" warn="${5:-}"
   local started out ms
   started=$(date +%s%N)
-  if out=$(curl -sS --max-time 120 "${ACCESS[@]}" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" "$target" -d "$body"); then
+  LAST_OUT=""
+  if out=$(curl -sS --max-time 120 "${ACCESS[@]}" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" "$target" --data-binary @- <<<"$body"); then
     ms=$(( ($(date +%s%N) - started) / 1000000 ))
+    LAST_OUT="$out"
     if ! grep -qF -- "$expect" <<<"$out"; then
       echo "FAIL $name — unexpected response: ${out:0:300}"; fail=1
     elif [ -n "$warn" ] && grep -qF -- "$warn" <<<"$out"; then
@@ -82,6 +84,24 @@ check "embeddings" "$(url 8081 /v1/embeddings)" \
 check "rerank" "$(url 8082 /v1/rerank)" \
   '{"model":"rerank","query":"GPU servers price","documents":["VPS plans start at 1,499 per month","GPU cloud A100 hourly pricing"]}' \
   '"relevance_score"'
+
+# ── Real-sized inputs, as large as the chatbot sends (tiny inputs can pass while real ones fail) ──
+# Plain text without quotes or backslashes, so it can go straight into JSON.
+PARA="Racko provides cloud infrastructure in India: virtual private servers, dedicated AMD EPYC servers and GPU cloud with NVIDIA cards, hosted in data centres in Mumbai, Noida and Chennai, with round-the-clock support and monthly or hourly billing. "
+repeat_to() { local s=""; while [ ${#s} -lt "$1" ]; do s+="$PARA"; done; printf '%s' "${s:0:$1}"; }
+
+# Embeddings: one chunk at the chatbot's cap (CHATBOT_EMBED_MAX_CHARS=2400) must fit in one ubatch.
+check "embeddings, 2,400 characters" "$(url 8081 /v1/embeddings)"   "{\"model\":\"embed\",\"input\":[\"$(repeat_to 2400)\"]}" '"embedding"'
+
+# Rerank: the chatbot sends up to 20 passages of ~500 tokens (~2,000 characters); all 20 must come back scored.
+DOC="$(repeat_to 2000)"; DOCS=""
+for i in $(seq 1 20); do DOCS+="${DOCS:+,}\"Passage $i. $DOC\""; done
+check "rerank, 20 passages of 2,000 characters" "$(url 8082 /v1/rerank)"   "{\"model\":\"rerank\",\"query\":\"Where are Racko's data centres?\",\"documents\":[$DOCS]}" '"relevance_score"'
+scored=$(grep -o '"relevance_score"' <<<"$LAST_OUT" | wc -l || true)
+if [ -n "$LAST_OUT" ] && [ "$scored" -ne 20 ]; then echo "FAIL rerank scored $scored of 20 passages"; fail=1; fi
+
+# Chat: a ~4,000-token prompt (the chatbot's largest is ~4,200) must fit in one slot (CHAT_CTX / CHAT_PARALLEL).
+check "chat, ~4,000-token prompt" "$(url 8080 /v1/chat/completions)"   "{\"model\":\"chat\",\"max_tokens\":200,\"chat_template_kwargs\":{\"enable_thinking\":false},\"messages\":[{\"role\":\"system\",\"content\":\"Answer only from this context. $(repeat_to 16000)\"},{\"role\":\"user\",\"content\":\"In one sentence: where are the data centres?\"}]}"   '"content"' '<think>'
 
 # Without the model API key: every server must refuse.
 for target in "8080 /v1/chat/completions" "8081 /v1/embeddings" "8082 /v1/rerank"; do
