@@ -68,8 +68,7 @@ services:
       - "${CHAT_MODEL_ALIAS:-qwen3-8b}"
       - --api-key-file
       - "/run/secrets/llm_api_key"
-      # API only: no built-in chat web UI.
-      - --no-webui
+      # Built-in web UI stays on for the team at https://llm.racko.ai (chatting needs the API key).
       - --n-gpu-layers
       - "99"
       # CHAT_CTX is shared by the slots: each request gets CHAT_CTX / CHAT_PARALLEL tokens. The chatbot needs

@@ -218,7 +218,8 @@ Minimum without Prometheus: a cron elsewhere running the `--public` smoke test e
 | `deploy.sh`: `chmod 644 secrets/cloudflared_credentials.json` | cloudflared runs non-root; keep `secrets/` at 700 |
 | `tunnel-setup.sh`: could not create the tunnel | a tunnel named `racko-llm-gpu` already exists — delete it in Cloudflare or run `TUNNEL_NAME=<new> ./tunnel-setup.sh` |
 | smoke test: `cloudflared has no registered tunnel connection` | wrong/expired token, or outbound HTTPS/7844 blocked — `docker compose logs cloudflared` |
-| `--public`: an API path returns 404 | only `/v1/chat/completions`, `/v1/embeddings`, `/v1/rerank`, `/health` and `/slots` are routed — add new paths to `cloudflared/config.yml` |
+| `--public`: chat works but embeddings/rerank return chat errors | rule order in `cloudflared/config.yml`: specific paths must come before the catch-all |
+| Web UI at https://llm.racko.ai can't chat | enter the API key (`secrets/llm_api_key`) in the UI's settings; share it only with the team |
 | `--public`: `blocked by Cloudflare` / 403 HTML | Access policy or service token wrong, or a bot/WAF challenge on `llm.racko.ai` |
 | core-api: `blocked by Cloudflare (302)` | `CHATBOT_SELFHOSTED_CF_ACCESS_*` missing or not in the Access policy |
 | chat unhealthy, `out of memory` / `cudaMalloc failed` | close GPU apps, `CHAT_CTX=6144`, or Profile B → `./deploy.sh --no-pull` |
