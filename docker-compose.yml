@@ -68,6 +68,8 @@ services:
       - "${CHAT_MODEL_ALIAS:-qwen3-8b}"
       - --api-key-file
       - "/run/secrets/llm_api_key"
+      # API only: no built-in chat web UI.
+      - --no-webui
       - --n-gpu-layers
       - "99"
       # CHAT_CTX is shared by the slots: each request gets CHAT_CTX / CHAT_PARALLEL tokens. The chatbot needs
@@ -112,6 +114,8 @@ services:
       - "${EMBED_MODEL_ALIAS:-qwen3-embedding-0.6b}"
       - --api-key-file
       - "/run/secrets/llm_api_key"
+      # API only: no built-in chat web UI.
+      - --no-webui
       - --n-gpu-layers
       - "99"
       - --embedding
@@ -157,6 +161,8 @@ services:
       - "${RERANK_MODEL_ALIAS:-bge-reranker-v2-m3}"
       - --api-key-file
       - "/run/secrets/llm_api_key"
+      # API only: no built-in chat web UI.
+      - --no-webui
       - --threads
       - "${RERANK_CPUS:-4}"
       - --embedding
@@ -198,6 +204,8 @@ services:
       - "${RERANK_MODEL_ALIAS:-bge-reranker-v2-m3}"
       - --api-key-file
       - "/run/secrets/llm_api_key"
+      # API only: no built-in chat web UI.
+      - --no-webui
       - --n-gpu-layers
       - "99"
       - --embedding
