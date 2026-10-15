@@ -1,17 +1,27 @@
 # Cloudflare Tunnel routes for https://llm.racko.ai (locally-managed tunnel — the rules live here, in git).
-# Order matters: the first matching rule wins, so specific paths come before the catch-all.
+# Order matters: the first matching rule wins. Only the paths the chatbot uses are routed; everything else
+# (llama-server's web UI, /props, /metrics, …) gets 404 at Cloudflare and never reaches this machine.
 # Service names are the Docker Compose services on this machine, reached over the compose network.
 # Credentials (tunnel-specific, not the account cert) are mounted from secrets/cloudflared_credentials.json.
 credentials-file: /etc/cloudflared/credentials.json
 
 ingress:
   - hostname: llm.racko.ai
-    path: ^/v1/embeddings
+    path: ^/v1/embeddings$
     service: http://embed:8080
   - hostname: llm.racko.ai
-    path: ^/v1/rerank
+    path: ^/v1/rerank$
     service: http://rerank:8080
   - hostname: llm.racko.ai
+    path: ^/v1/chat/completions$
     service: http://chat:8080
-  # Anything else that reaches this tunnel is refused.
+  # Liveness for ./smoke-test.sh --public.
+  - hostname: llm.racko.ai
+    path: ^/health$
+    service: http://chat:8080
+  # Slot count and usage for the chatbot's Super Admin status page (needs the API key, like the API).
+  - hostname: llm.racko.ai
+    path: ^/slots$
+    service: http://chat:8080
+  # Anything else is refused.
   - service: http_status:404

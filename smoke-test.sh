@@ -99,6 +99,14 @@ if [ "$MODE" = "--public" ]; then
   else
     echo "note no Cloudflare Access: $BASE is public; the API key is the only lock (keep secrets/llm_api_key secret)"
   fi
+
+  # Only the API paths, /health and /slots are routed (cloudflared/config.yml); the rest must be 404.
+  for path in / /props /metrics /v1/models; do
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${ACCESS[@]}" -H "Authorization: Bearer $KEY" "$BASE$path" || true)
+    expect_blocked "tunnel refuses $path" "$code" 404
+  done
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${ACCESS[@]}" -H "Authorization: Bearer $KEY" "$BASE/slots" || true)
+  expect_blocked "/slots reachable with the API key (chatbot status page)" "$code" 200
 fi
 
 if [[ "$PROFILES" == *",docling,"* ]] && [ "$MODE" != "--public" ]; then
