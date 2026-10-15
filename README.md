@@ -33,15 +33,15 @@ core-api (Proxmox VM) ──HTTPS──▶ Cloudflare (Access: service token req
 | Observability | llama.cpp `/metrics`, cloudflared metrics, optional GPU exporter |
 | Licences | Models Apache-2.0 (`models.lock`); llama.cpp, docling MIT; cloudflared Apache-2.0 |
 
-**Known limits:** one GPU = single point of failure; it answers one chat at a time in Profile A, four in
-Profile B (`CHAT_PARALLEL`), and further requests queue. Chat falls back to OpenAI and search to keyword-only
+**Known limits:** one GPU = single point of failure; it answers four chats at a time in Profile B (production),
+one in Profile A (`CHAT_PARALLEL`), and further requests queue. Chat falls back to OpenAI and search to keyword-only
 in core-api. Cloudflare closes responses that take **> 100 s** — fine for chat (~15 s)
 and search, but **not for parsing big PDFs**, which is why docling belongs on the app server.
 This is an **office desktop**: keep it powered on, disable sleep, and keep other GPU apps closed.
 
 ## Choose a profile
 
-| | Profile A (default) | Profile B |
+| | Profile A | Profile B (default, production) |
 |---|---|---|
 | Chat model | Qwen3-8B | Qwen3-4B-Instruct-2507 |
 | Reranker on | CPU (+1–3 s per question) | GPU |

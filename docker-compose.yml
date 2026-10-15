@@ -76,7 +76,7 @@ services:
       # (e.g. CHAT_PARALLEL=4 → CHAT_CTX=24576). Requests beyond CHAT_PARALLEL queue; core-api falls back
       # to OpenAI when an answer doesn't start in time.
       - --ctx-size
-      - "${CHAT_CTX:-8192}"
+      - "${CHAT_CTX:-6144}"
       - --parallel
       - "${CHAT_PARALLEL:-1}"
       # 8-bit KV cache halves its VRAM (requires flash attention).
